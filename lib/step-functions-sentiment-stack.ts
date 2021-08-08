@@ -2,11 +2,13 @@ import { AttributeType, BillingMode, Table } from '@aws-cdk/aws-dynamodb';
 import { Effect, PolicyStatement } from '@aws-cdk/aws-iam';
 import { Runtime } from '@aws-cdk/aws-lambda';
 import { NodejsFunction } from '@aws-cdk/aws-lambda-nodejs';
-import { RetentionDays } from '@aws-cdk/aws-logs';
+import { LogGroup, RetentionDays } from '@aws-cdk/aws-logs';
 import {
   Choice,
   Condition,
   JsonPath,
+  StateMachine,
+  StateMachineType,
   Succeed,
 } from '@aws-cdk/aws-stepfunctions';
 import {
@@ -14,12 +16,19 @@ import {
   DynamoPutItem,
   LambdaInvoke,
 } from '@aws-cdk/aws-stepfunctions-tasks';
-import { Construct, RemovalPolicy, Stack, StackProps } from '@aws-cdk/core';
+import {
+  Construct,
+  Duration,
+  RemovalPolicy,
+  Stack,
+  StackProps,
+} from '@aws-cdk/core';
 import { pascalCase } from 'change-case';
 
 export class StepFunctionsSentimentStack extends Stack {
   public id: string;
-  private props: StackProps;
+
+  public sentimentAnalysis: StateMachine;
 
   public sentimentLambda: NodejsFunction;
   public detectSentiment: LambdaInvoke;
@@ -38,7 +47,6 @@ export class StepFunctionsSentimentStack extends Stack {
     super(scope, id, props);
 
     this.id = id;
-    this.props = props;
   }
 
   buildSentimentLambda() {
@@ -72,50 +80,6 @@ export class StepFunctionsSentimentStack extends Stack {
       lambdaFunction: this.sentimentLambda,
       resultPath: '$.sentimentResult',
     });
-  }
-
-  buildSentimentNotificationLambda() {
-    const sendSentimentNotificationId = pascalCase(
-      `${this.id}-sentiment-notification`
-    );
-    const negativeSentimentNotificationLambdaId = pascalCase(
-      `${sendSentimentNotificationId}-lambda`
-    );
-    this.negativeSentimentNotificationLambda = new NodejsFunction(
-      this,
-      negativeSentimentNotificationLambdaId,
-      {
-        functionName: negativeSentimentNotificationLambdaId,
-        runtime: Runtime.NODEJS_12_X,
-        entry: 'src/handlers.ts',
-        handler: 'negativeSentimentNotification',
-        memorySize: 256,
-        logRetention: RetentionDays.ONE_MONTH,
-        bundling: {
-          nodeModules: ['aws-sdk', 'ulid'],
-          externalModules: [],
-        },
-      }
-    );
-
-    this.sendSentimentNotification = new LambdaInvoke(
-      this,
-      sendSentimentNotificationId,
-      {
-        lambdaFunction: this.negativeSentimentNotificationLambda,
-        resultPath: '$.notifyViaEmail',
-      }
-    );
-
-    this.checkSentimentChoice = new Choice(this, 'checkSentiment')
-      .when(
-        Condition.stringEquals(
-          '$.sentimentResult.Payload.Sentiment',
-          'NEGATIVE'
-        ),
-        this.sendSentimentNotification
-      )
-      .otherwise(new Succeed(this, 'positiveSentiment'));
   }
 
   buildIdGeneratorLambda() {
@@ -178,5 +142,70 @@ export class StepFunctionsSentimentStack extends Stack {
       },
       resultPath: '$.formDataRecord',
     });
+  }
+
+  buildSentimentNotificationLambda() {
+    const sendSentimentNotificationId = pascalCase(
+      `${this.id}-sentiment-notification`
+    );
+    const negativeSentimentNotificationLambdaId = pascalCase(
+      `${sendSentimentNotificationId}-lambda`
+    );
+    this.negativeSentimentNotificationLambda = new NodejsFunction(
+      this,
+      negativeSentimentNotificationLambdaId,
+      {
+        functionName: negativeSentimentNotificationLambdaId,
+        runtime: Runtime.NODEJS_12_X,
+        entry: 'src/handlers.ts',
+        handler: 'negativeSentimentNotification',
+        memorySize: 256,
+        logRetention: RetentionDays.ONE_MONTH,
+        bundling: {
+          nodeModules: ['aws-sdk', 'ulid'],
+          externalModules: [],
+        },
+      }
+    );
+
+    this.sendSentimentNotification = new LambdaInvoke(
+      this,
+      sendSentimentNotificationId,
+      {
+        lambdaFunction: this.negativeSentimentNotificationLambda,
+        resultPath: '$.notifyViaEmail',
+      }
+    );
+
+    this.checkSentimentChoice = new Choice(this, 'checkSentiment')
+      .when(
+        Condition.stringEquals(
+          '$.sentimentResult.Payload.Sentiment',
+          'NEGATIVE'
+        ),
+        this.sendSentimentNotification
+      )
+      .otherwise(new Succeed(this, 'positiveSentiment'));
+  }
+
+  buildWorkflow() {
+    const definition = this.detectSentiment
+      .next(this.generateReferenceNumber)
+      .next(this.saveFeedback)
+      .next(this.checkSentimentChoice);
+
+    const sentimentAnalysisId = pascalCase(`${this.id}-sentiment-analysis`);
+    this.sentimentAnalysis = new StateMachine(this, sentimentAnalysisId, {
+      definition,
+      stateMachineType: StateMachineType.EXPRESS,
+      timeout: Duration.seconds(30),
+      logs: {
+        destination: new LogGroup(this, `${sentimentAnalysisId}-logs`, {
+          retention: RetentionDays.ONE_WEEK,
+        }),
+      },
+    });
+
+    this.feedbackTable.grantWriteData(this.sentimentAnalysis);
   }
 }
