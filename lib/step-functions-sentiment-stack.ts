@@ -13,6 +13,9 @@ export class StepFunctionsSentimentStack extends Stack {
   public sentimentLambda: NodejsFunction;
   public detectSentiment: LambdaInvoke;
 
+  public generateReferenceNumberLambda: NodejsFunction;
+  public generateReferenceNumber: LambdaInvoke;
+
   constructor(scope: Construct, id: string, props: StackProps) {
     super(scope, id, props);
 
@@ -51,5 +54,38 @@ export class StepFunctionsSentimentStack extends Stack {
       lambdaFunction: this.sentimentLambda,
       resultPath: '$.sentimentResult',
     });
+  }
+
+  buildIdGeneratorLambda() {
+    const generateReferenceNumberId = pascalCase(`${this.id}-generate-id`);
+    const generateReferenceNumberLambdaId = pascalCase(
+      `${generateReferenceNumberId}-lambda`
+    );
+
+    this.generateReferenceNumberLambda = new NodejsFunction(
+      this,
+      generateReferenceNumberLambdaId,
+      {
+        functionName: generateReferenceNumberLambdaId,
+        runtime: Runtime.NODEJS_12_X,
+        entry: 'src/handlers.ts',
+        handler: 'idGenerator',
+        memorySize: 256,
+        logRetention: RetentionDays.ONE_MONTH,
+        bundling: {
+          nodeModules: ['aws-sdk', 'ulid'],
+          externalModules: [],
+        },
+      }
+    );
+
+    this.generateReferenceNumber = new LambdaInvoke(
+      this,
+      generateReferenceNumberId,
+      {
+        lambdaFunction: this.generateReferenceNumberLambda,
+        resultPath: '$.ticketId',
+      }
+    );
   }
 }

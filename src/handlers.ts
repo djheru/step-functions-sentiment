@@ -1,4 +1,6 @@
 import { Comprehend } from 'aws-sdk';
+import { ulid } from 'ulid';
+
 type Event = {
   message: string;
 };
@@ -20,4 +22,8 @@ export const sentimentHandler = async (event: Event) => {
     console.error(e);
     throw e;
   }
+};
+
+export const idGenerator = async () => {
+  return ulid();
 };
