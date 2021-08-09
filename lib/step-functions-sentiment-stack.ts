@@ -36,8 +36,8 @@ export class StepFunctionsSentimentStack extends Stack {
   public generateReferenceNumberLambda: NodejsFunction;
   public generateReferenceNumber: LambdaInvoke;
 
-  public feedbackTable: Table;
-  public saveFeedback: DynamoPutItem;
+  public reviewTable: Table;
+  public saveReview: DynamoPutItem;
 
   public negativeSentimentNotificationLambda: NodejsFunction;
   public sendSentimentNotification: LambdaInvoke;
@@ -47,6 +47,14 @@ export class StepFunctionsSentimentStack extends Stack {
     super(scope, id, props);
 
     this.id = id;
+  }
+
+  buildResources() {
+    this.buildSentimentLambda();
+    this.buildIdGeneratorLambda();
+    this.buildReviewTable();
+    this.buildSentimentNotificationLambda();
+    this.buildWorkflow();
   }
 
   buildSentimentLambda() {
@@ -110,28 +118,28 @@ export class StepFunctionsSentimentStack extends Stack {
       generateReferenceNumberId,
       {
         lambdaFunction: this.generateReferenceNumberLambda,
-        resultPath: '$.ticketId',
+        resultPath: '$.reviewId',
       }
     );
   }
 
-  buildFeedbackTable() {
-    const feedbackTableId = pascalCase(`${this.id}-feedback-table`);
-    const saveFeedbackId = pascalCase(`${this.id}-save-feedback`);
-    this.feedbackTable = new Table(this, feedbackTableId, {
+  buildReviewTable() {
+    const reviewTableId = pascalCase(`${this.id}-review-table`);
+    const saveReviewId = pascalCase(`${this.id}-save-review`);
+    this.reviewTable = new Table(this, reviewTableId, {
       partitionKey: {
-        name: 'formId',
+        name: 'reviewId',
         type: AttributeType.STRING,
       },
       billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    this.saveFeedback = new DynamoPutItem(this, saveFeedbackId, {
-      table: this.feedbackTable,
+    this.saveReview = new DynamoPutItem(this, saveReviewId, {
+      table: this.reviewTable,
       item: {
         formId: DynamoAttributeValue.fromString(
-          JsonPath.stringAt('$.ticketId.Payload')
+          JsonPath.stringAt('$.reviewId.Payload')
         ),
         customerMessage: DynamoAttributeValue.fromString(
           JsonPath.stringAt('$.message')
@@ -140,7 +148,7 @@ export class StepFunctionsSentimentStack extends Stack {
           JsonPath.stringAt('$.sentimentResult.Payload.Sentiment')
         ),
       },
-      resultPath: '$.formDataRecord',
+      resultPath: '$.reviewDataRecord',
     });
   }
 
@@ -191,7 +199,7 @@ export class StepFunctionsSentimentStack extends Stack {
   buildWorkflow() {
     const definition = this.detectSentiment
       .next(this.generateReferenceNumber)
-      .next(this.saveFeedback)
+      .next(this.saveReview)
       .next(this.checkSentimentChoice);
 
     const sentimentAnalysisId = pascalCase(`${this.id}-sentiment-analysis`);
@@ -206,6 +214,6 @@ export class StepFunctionsSentimentStack extends Stack {
       },
     });
 
-    this.feedbackTable.grantWriteData(this.sentimentAnalysis);
+    this.reviewTable.grantWriteData(this.sentimentAnalysis);
   }
 }

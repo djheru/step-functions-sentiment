@@ -1,0 +1,23 @@
+type ReviewDetails {
+  EventId: String
+  ErrorMessage: String
+  ErrorCode: String
+}
+
+type Mutation {
+  putReview(reviewText: String!): Result
+}
+
+type Query {
+  getReview: String
+}
+
+type Result {
+  Entries: [ReviewDetails]
+  FailedEntries: Int
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+}

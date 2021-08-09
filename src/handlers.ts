@@ -51,7 +51,7 @@ export const negativeSentimentNotification = async (event: any) => {
           Simple: {
             Subject: {
               Charset: 'UTF-8',
-              Data: 'Negative sentiment review submission',
+              Data: 'Negative sentiment customer review',
             },
             Body: {
               Text: {
