@@ -2,7 +2,7 @@ import { Comprehend, SESV2 } from 'aws-sdk';
 import { ulid } from 'ulid';
 
 type Event = {
-  message: string;
+  detail: Record<'reviewText', string>;
 };
 
 const {
@@ -20,7 +20,7 @@ export const sentimentHandler = async (event: Event) => {
     const data = await comprehend
       .detectSentiment({
         LanguageCode: 'en',
-        Text: event.message,
+        Text: event.detail.reviewText,
       })
       .promise();
     console.log('Sentiment Analysis: %j', data);
@@ -31,15 +31,19 @@ export const sentimentHandler = async (event: Event) => {
   }
 };
 
-export const idGenerator = async () => {
-  return ulid();
+export const idGenerator = async (event: any) => {
+  console.log('idGenerator: %j', event);
+  const generatedId = ulid();
+  console.log(`Generated ID: ${generatedId}`);
+  return generatedId;
 };
 
 export const negativeSentimentNotification = async (event: any) => {
   try {
+    console.log('negativeSentimentNotification: %j', event);
     const message = `
       Sentiment analysis: ${event.sentimentResult.Payload.Sentiment}
-      Customer Review: ${event.message}
+      Customer Review: ${event.detail.reviewText}
     `;
     await ses
       .sendEmail({

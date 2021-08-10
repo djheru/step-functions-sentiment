@@ -1,9 +1,12 @@
 import { AttributeType, BillingMode, Table } from '@aws-cdk/aws-dynamodb';
+import { EventBus, Rule } from '@aws-cdk/aws-events';
+import { SfnStateMachine } from '@aws-cdk/aws-events-targets';
 import { Effect, PolicyStatement } from '@aws-cdk/aws-iam';
 import { Runtime } from '@aws-cdk/aws-lambda';
 import { NodejsFunction } from '@aws-cdk/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from '@aws-cdk/aws-logs';
 import {
+  Chain,
   Choice,
   Condition,
   JsonPath,
@@ -24,11 +27,22 @@ import {
   StackProps,
 } from '@aws-cdk/core';
 import { pascalCase } from 'change-case';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+const { SENDER = '', RECIPIENT = '' } = process.env;
+
+export interface StepFunctionsSentimentStackProps extends StackProps {
+  eventBus: EventBus;
+}
 
 export class StepFunctionsSentimentStack extends Stack {
   public id: string;
+  public eventBus: EventBus;
 
   public sentimentAnalysis: StateMachine;
+  public sentimentAnalysisDefinition: Chain;
 
   public sentimentLambda: NodejsFunction;
   public detectSentiment: LambdaInvoke;
@@ -41,12 +55,22 @@ export class StepFunctionsSentimentStack extends Stack {
 
   public negativeSentimentNotificationLambda: NodejsFunction;
   public sendSentimentNotification: LambdaInvoke;
+
   public checkSentimentChoice: Choice;
 
-  constructor(scope: Construct, id: string, props: StackProps) {
+  public sentimentAnalysisTrigger: SfnStateMachine;
+
+  constructor(
+    scope: Construct,
+    id: string,
+    props: StepFunctionsSentimentStackProps
+  ) {
     super(scope, id, props);
 
     this.id = id;
+    this.eventBus = props.eventBus;
+
+    this.buildResources();
   }
 
   buildResources() {
@@ -55,6 +79,7 @@ export class StepFunctionsSentimentStack extends Stack {
     this.buildReviewTable();
     this.buildSentimentNotificationLambda();
     this.buildWorkflow();
+    this.buildEventTrigger();
   }
 
   buildSentimentLambda() {
@@ -138,11 +163,11 @@ export class StepFunctionsSentimentStack extends Stack {
     this.saveReview = new DynamoPutItem(this, saveReviewId, {
       table: this.reviewTable,
       item: {
-        formId: DynamoAttributeValue.fromString(
+        reviewId: DynamoAttributeValue.fromString(
           JsonPath.stringAt('$.reviewId.Payload')
         ),
         customerMessage: DynamoAttributeValue.fromString(
-          JsonPath.stringAt('$.message')
+          JsonPath.stringAt('$.detail.reviewText')
         ),
         sentiment: DynamoAttributeValue.fromString(
           JsonPath.stringAt('$.sentimentResult.Payload.Sentiment')
@@ -175,6 +200,18 @@ export class StepFunctionsSentimentStack extends Stack {
         },
       }
     );
+    this.negativeSentimentNotificationLambda.addEnvironment('SENDER', SENDER);
+    this.negativeSentimentNotificationLambda.addEnvironment(
+      'RECIPIENT',
+      RECIPIENT
+    );
+    this.negativeSentimentNotificationLambda.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['ses:SendEmail'],
+        resources: ['*'],
+      })
+    );
 
     this.sendSentimentNotification = new LambdaInvoke(
       this,
@@ -197,14 +234,14 @@ export class StepFunctionsSentimentStack extends Stack {
   }
 
   buildWorkflow() {
-    const definition = this.detectSentiment
+    this.sentimentAnalysisDefinition = this.detectSentiment
       .next(this.generateReferenceNumber)
       .next(this.saveReview)
       .next(this.checkSentimentChoice);
 
     const sentimentAnalysisId = pascalCase(`${this.id}-sentiment-analysis`);
     this.sentimentAnalysis = new StateMachine(this, sentimentAnalysisId, {
-      definition,
+      definition: this.sentimentAnalysisDefinition,
       stateMachineType: StateMachineType.EXPRESS,
       timeout: Duration.seconds(30),
       logs: {
@@ -215,5 +252,20 @@ export class StepFunctionsSentimentStack extends Stack {
     });
 
     this.reviewTable.grantWriteData(this.sentimentAnalysis);
+  }
+
+  buildEventTrigger() {
+    const sentimentAnalysisRuleId = pascalCase(
+      `${this.id}-sentiment-analysis-trigger`
+    );
+    this.sentimentAnalysisTrigger = new SfnStateMachine(this.sentimentAnalysis);
+
+    new Rule(this, sentimentAnalysisRuleId, {
+      eventBus: this.eventBus,
+      targets: [this.sentimentAnalysisTrigger],
+      eventPattern: {
+        detailType: ['SentimentAnalysisReview'], // Matching value in request.vtl
+      },
+    });
   }
 }

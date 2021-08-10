@@ -12,8 +12,8 @@
         {
           "Source":"appsync",
           "EventBusName": "SentimentAnalysisReviewsEventBus",
-          "Detail":"{ \"event\": \"$ctx.arguments.event\"}",
-          "DetailType":"Event Bridge via AppSync GraphQL"
+          "Detail":"{ \"reviewText\": \"$ctx.arguments.reviewText\"}",
+          "DetailType":"SentimentAnalysisReview"
          }
       ]
     }
