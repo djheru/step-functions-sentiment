@@ -160,6 +160,15 @@ export class StepFunctionsSentimentStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
+    const sentimentIndexId = pascalCase(`${this.id}-sentiment-index`);
+    this.reviewTable.addGlobalSecondaryIndex({
+      indexName: sentimentIndexId,
+      partitionKey: {
+        name: 'sentiment',
+        type: AttributeType.STRING,
+      },
+    });
+
     this.saveReview = new DynamoPutItem(this, saveReviewId, {
       table: this.reviewTable,
       item: {
