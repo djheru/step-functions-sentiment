@@ -1,20 +1,31 @@
-type ReviewDetails {
+enum SENTIMENT {
+  POSITIVE
+  NEGATIVE
+} 
+
+type Review {
+  reviewId: String;
+  customerMessage: String;
+  sentiment: SENTIMENT
+}
+
+type PutReviewDetails {
   EventId: String
   ErrorMessage: String
   ErrorCode: String
 }
 
+type PutReviewResult {
+  Entries: [PutReviewDetails]
+  FailedEntries: Int
+}
+
 type Mutation {
-  putReview(reviewText: String!): Result
+  putReview(reviewText: String!): PutReviewResult
 }
 
 type Query {
-  getReview: String
-}
-
-type Result {
-  Entries: [ReviewDetails]
-  FailedEntries: Int
+  getReview(reviewId: String!): Review
 }
 
 schema {

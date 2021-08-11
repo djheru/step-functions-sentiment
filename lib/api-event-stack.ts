@@ -5,18 +5,21 @@ import {
   MappingTemplate,
   Schema,
 } from '@aws-cdk/aws-appsync';
+import { Table } from '@aws-cdk/aws-dynamodb';
 import { EventBus } from '@aws-cdk/aws-events';
 import { PolicyStatement, Role, ServicePrincipal } from '@aws-cdk/aws-iam';
 import { CfnOutput, Construct, Stack, StackProps } from '@aws-cdk/core';
 import { pascalCase } from 'change-case';
 import { join } from 'path';
 
+const { REVIEWS_EVENT_BUS_NAME = '', REVIEWS_TABLE_NAME = '' } = process.env;
+
 export class ApiEventStack extends Stack {
   public id: string;
 
   public reviewsEventBus: EventBus;
   public reviewsApi: GraphqlApi;
-  public eventBridgeDataSource: HttpDataSource;
+  public putReviewEventBridgeDataSource: HttpDataSource;
 
   public reviewsApiUrl: string;
   public reviewsApiKey: string;
@@ -35,15 +38,15 @@ export class ApiEventStack extends Stack {
     this.buildEventBus();
     this.buildApi();
     this.buildEventBridgeRole();
-    this.buildEventBridgeDataSource();
-    this.buildEventBridgeResolver();
+    this.buildPutReviewMutation();
+    this.buildGetReviewQuery();
     this.buildCfnOutput();
   }
 
   buildEventBus() {
     const reviewsEventBusId = pascalCase(`${this.id}-reviews-event-bus`);
     this.reviewsEventBus = new EventBus(this, reviewsEventBusId, {
-      eventBusName: reviewsEventBusId,
+      eventBusName: REVIEWS_EVENT_BUS_NAME,
     });
   }
 
@@ -77,36 +80,57 @@ export class ApiEventStack extends Stack {
     );
   }
 
-  buildEventBridgeDataSource() {
+  buildPutReviewMutation() {
     const endpoint = `https://events.${this.region}.amazonaws.com/`;
-    const eventBridgeDataSourceId = pascalCase(
-      `${this.id}-event-bridge-datasource`
+    const signingRegion = this.region;
+    const signingServiceName = 'events';
+    const authorizationConfig = { signingRegion, signingServiceName };
+    const putReviewEventBridgeDataSourceId = pascalCase(
+      `${this.id}-put-review-ds`
     );
-    this.eventBridgeDataSource = this.reviewsApi.addHttpDataSource(
-      eventBridgeDataSourceId,
+    const putReviewEventBridgeDataSource = this.reviewsApi.addHttpDataSource(
+      putReviewEventBridgeDataSourceId,
       endpoint,
-      {
-        authorizationConfig: {
-          signingRegion: this.region,
-          signingServiceName: 'events',
-        },
-      }
+      { authorizationConfig }
     );
-    this.reviewsEventBus.grantPutEventsTo(
-      this.eventBridgeDataSource.grantPrincipal
-    );
-  }
 
-  buildEventBridgeResolver() {
-    this.eventBridgeDataSource.createResolver({
+    this.reviewsEventBus.grantPutEventsTo(
+      putReviewEventBridgeDataSource.grantPrincipal
+    );
+
+    putReviewEventBridgeDataSource.createResolver({
       typeName: 'Mutation',
       fieldName: 'putReview',
       requestMappingTemplate: MappingTemplate.fromFile(
-        join(__dirname, '..', 'templates', 'request.vtl')
+        join(__dirname, '../templates', 'put-review-request.vtl')
       ),
       responseMappingTemplate: MappingTemplate.fromFile(
-        join(__dirname, '..', 'templates', 'response.vtl')
+        join(__dirname, '../templates', 'put-review-response.vtl')
       ),
+    });
+  }
+
+  buildGetReviewQuery() {
+    const getReviewDynamoDBDataSourceId = pascalCase(
+      `${this.id}-get-review-ds`
+    );
+    const getReviewDynamoDBDataSource = this.reviewsApi.addDynamoDbDataSource(
+      getReviewDynamoDBDataSourceId,
+      Table.fromTableName(
+        this,
+        pascalCase(`${getReviewDynamoDBDataSourceId}-table`),
+        REVIEWS_TABLE_NAME
+      )
+    );
+
+    getReviewDynamoDBDataSource.createResolver({
+      typeName: 'Query',
+      fieldName: 'getReview',
+      requestMappingTemplate: MappingTemplate.dynamoDbGetItem(
+        'reviewId',
+        'reviewId'
+      ),
+      responseMappingTemplate: MappingTemplate.dynamoDbResultItem(),
     });
   }
 

@@ -31,15 +31,15 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const { SENDER = '', RECIPIENT = '' } = process.env;
-
-export interface StepFunctionsSentimentStackProps extends StackProps {
-  eventBus: EventBus;
-}
+const {
+  SENDER = '',
+  RECIPIENT = '',
+  REVIEWS_EVENT_BUS_NAME = '',
+  REVIEWS_TABLE_NAME = '',
+} = process.env;
 
 export class StepFunctionsSentimentStack extends Stack {
   public id: string;
-  public eventBus: EventBus;
 
   public sentimentAnalysis: StateMachine;
   public sentimentAnalysisDefinition: Chain;
@@ -60,15 +60,10 @@ export class StepFunctionsSentimentStack extends Stack {
 
   public sentimentAnalysisTrigger: SfnStateMachine;
 
-  constructor(
-    scope: Construct,
-    id: string,
-    props: StepFunctionsSentimentStackProps
-  ) {
+  constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
     this.id = id;
-    this.eventBus = props.eventBus;
 
     this.buildResources();
   }
@@ -90,12 +85,12 @@ export class StepFunctionsSentimentStack extends Stack {
     this.sentimentLambda = new NodejsFunction(this, sentimentLambdaId, {
       functionName: sentimentLambdaId,
       runtime: Runtime.NODEJS_12_X,
-      entry: 'src/handlers.ts',
-      handler: 'sentimentHandler',
+      entry: 'src/detect-sentiment.ts',
+      handler: 'handler',
       memorySize: 256,
       logRetention: RetentionDays.ONE_MONTH,
       bundling: {
-        nodeModules: ['aws-sdk', 'ulid'],
+        nodeModules: ['aws-sdk'],
         externalModules: [],
       },
     });
@@ -127,9 +122,9 @@ export class StepFunctionsSentimentStack extends Stack {
       {
         functionName: generateReferenceNumberLambdaId,
         runtime: Runtime.NODEJS_12_X,
-        entry: 'src/handlers.ts',
-        handler: 'idGenerator',
-        memorySize: 256,
+        entry: 'src/generate-id.ts',
+        handler: 'handler',
+        memorySize: 128,
         logRetention: RetentionDays.ONE_MONTH,
         bundling: {
           nodeModules: ['aws-sdk', 'ulid'],
@@ -152,6 +147,7 @@ export class StepFunctionsSentimentStack extends Stack {
     const reviewTableId = pascalCase(`${this.id}-review-table`);
     const saveReviewId = pascalCase(`${this.id}-save-review`);
     this.reviewTable = new Table(this, reviewTableId, {
+      tableName: REVIEWS_TABLE_NAME,
       partitionKey: {
         name: 'reviewId',
         type: AttributeType.STRING,
@@ -199,12 +195,12 @@ export class StepFunctionsSentimentStack extends Stack {
       {
         functionName: negativeSentimentNotificationLambdaId,
         runtime: Runtime.NODEJS_12_X,
-        entry: 'src/handlers.ts',
-        handler: 'negativeSentimentNotification',
+        entry: 'src/sentiment-notification.ts',
+        handler: 'handler',
         memorySize: 256,
         logRetention: RetentionDays.ONE_MONTH,
         bundling: {
-          nodeModules: ['aws-sdk', 'ulid'],
+          nodeModules: ['aws-sdk'],
           externalModules: [],
         },
       }
@@ -270,7 +266,11 @@ export class StepFunctionsSentimentStack extends Stack {
     this.sentimentAnalysisTrigger = new SfnStateMachine(this.sentimentAnalysis);
 
     new Rule(this, sentimentAnalysisRuleId, {
-      eventBus: this.eventBus,
+      eventBus: EventBus.fromEventBusName(
+        this,
+        pascalCase(`${sentimentAnalysisRuleId}-event-bus`),
+        REVIEWS_EVENT_BUS_NAME
+      ),
       targets: [this.sentimentAnalysisTrigger],
       eventPattern: {
         detailType: ['SentimentAnalysisReview'], // Matching value in request.vtl
