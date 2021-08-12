@@ -2,6 +2,7 @@ import {
   FieldLogLevel,
   GraphqlApi,
   HttpDataSource,
+  KeyCondition,
   MappingTemplate,
   Schema,
 } from '@aws-cdk/aws-appsync';
@@ -13,9 +14,13 @@ import { pascalCase } from 'change-case';
 import { join } from 'path';
 
 const { REVIEWS_EVENT_BUS_NAME = '', REVIEWS_TABLE_NAME = '' } = process.env;
-
+export interface ApiEventStackProps extends StackProps {
+  table: Table;
+  eventBus: EventBus;
+}
 export class ApiEventStack extends Stack {
   public id: string;
+  public reviewsTable: Table;
 
   public reviewsEventBus: EventBus;
   public reviewsApi: GraphqlApi;
@@ -26,28 +31,23 @@ export class ApiEventStack extends Stack {
   public reviewsApiId: string;
   public reviewsEventBusArn: string;
 
-  constructor(scope: Construct, id: string, props: StackProps) {
+  constructor(scope: Construct, id: string, props: ApiEventStackProps) {
     super(scope, id, props);
 
     this.id = id;
+    this.reviewsTable = props.table;
+    this.reviewsEventBus = props.eventBus;
 
     this.buildResources();
   }
 
   buildResources() {
-    this.buildEventBus();
     this.buildApi();
     this.buildEventBridgeRole();
     this.buildPutReviewMutation();
     this.buildGetReviewQuery();
+    this.buildGetReviewsBySentimentQuery();
     this.buildCfnOutput();
-  }
-
-  buildEventBus() {
-    const reviewsEventBusId = pascalCase(`${this.id}-reviews-event-bus`);
-    this.reviewsEventBus = new EventBus(this, reviewsEventBusId, {
-      eventBusName: REVIEWS_EVENT_BUS_NAME,
-    });
   }
 
   buildApi() {
@@ -66,13 +66,11 @@ export class ApiEventStack extends Stack {
   }
 
   buildEventBridgeRole() {
-    const appSyncEventBridgeRoleId = pascalCase(
-      `${this.id}-appsync-eventbridge-role`
-    );
-    const appSyncEventBridgeRole = new Role(this, appSyncEventBridgeRoleId, {
+    const appSyncRoleId = pascalCase(`${this.id}-appsync-eventbridge-role`);
+    const appSyncRole = new Role(this, appSyncRoleId, {
       assumedBy: new ServicePrincipal('appsync.amazonaws.com'),
     });
-    appSyncEventBridgeRole.addToPolicy(
+    appSyncRole.addToPolicy(
       new PolicyStatement({
         resources: ['*'],
         actions: ['events:PutEvents'],
@@ -116,11 +114,7 @@ export class ApiEventStack extends Stack {
     );
     const getReviewDynamoDBDataSource = this.reviewsApi.addDynamoDbDataSource(
       getReviewDynamoDBDataSourceId,
-      Table.fromTableName(
-        this,
-        pascalCase(`${getReviewDynamoDBDataSourceId}-table`),
-        REVIEWS_TABLE_NAME
-      )
+      this.reviewsTable
     );
 
     getReviewDynamoDBDataSource.createResolver({
@@ -134,6 +128,27 @@ export class ApiEventStack extends Stack {
     });
   }
 
+  buildGetReviewsBySentimentQuery() {
+    const getReviewsBySentimentDynamoDBDataSourceId = pascalCase(
+      `${this.id}-get-reviews-by-sentiment-ds`
+    );
+    const getReviewsBySentimentDynamoDBDataSource =
+      this.reviewsApi.addDynamoDbDataSource(
+        getReviewsBySentimentDynamoDBDataSourceId,
+        this.reviewsTable
+      );
+
+    getReviewsBySentimentDynamoDBDataSource.createResolver({
+      typeName: 'Query',
+      fieldName: 'getReviewsBySentiment',
+      requestMappingTemplate: MappingTemplate.dynamoDbQuery(
+        KeyCondition.eq('sentiment', 'sentiment'),
+        'SentimentAnalysisWorkflowSentimentIndex'
+      ),
+      responseMappingTemplate: MappingTemplate.dynamoDbResultList(),
+    });
+  }
+
   buildCfnOutput() {
     this.reviewsApiUrl = this.reviewsApi.graphqlUrl;
     new CfnOutput(this, 'reviewsApiUrl', { value: this.reviewsApiUrl });
@@ -143,10 +158,5 @@ export class ApiEventStack extends Stack {
 
     this.reviewsApiId = this.reviewsApi.apiId;
     new CfnOutput(this, 'reviewsApiId', { value: this.reviewsApiId });
-
-    this.reviewsEventBusArn = this.reviewsEventBus.eventBusArn;
-    new CfnOutput(this, 'reviewsEventBusArn', {
-      value: this.reviewsEventBusArn,
-    });
   }
 }

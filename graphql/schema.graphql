@@ -1,6 +1,7 @@
 enum SENTIMENT {
-  POSITIVE
+  MIXED
   NEGATIVE
+  POSITIVE
 } 
 
 type Review {
@@ -26,6 +27,7 @@ type Mutation {
 
 type Query {
   getReview(reviewId: String!): Review
+  getReviewsBySentiment(sentiment: SENTIMENT!): [Review]
 }
 
 schema {

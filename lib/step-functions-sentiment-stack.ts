@@ -41,6 +41,8 @@ const {
 export class StepFunctionsSentimentStack extends Stack {
   public id: string;
 
+  public reviewsEventBus: EventBus;
+
   public sentimentAnalysis: StateMachine;
   public sentimentAnalysisDefinition: Chain;
 
@@ -50,7 +52,7 @@ export class StepFunctionsSentimentStack extends Stack {
   public generateReferenceNumberLambda: NodejsFunction;
   public generateReferenceNumber: LambdaInvoke;
 
-  public reviewTable: Table;
+  public reviewsTable: Table;
   public saveReview: DynamoPutItem;
 
   public negativeSentimentNotificationLambda: NodejsFunction;
@@ -69,12 +71,20 @@ export class StepFunctionsSentimentStack extends Stack {
   }
 
   buildResources() {
+    this.buildEventBus();
     this.buildSentimentLambda();
     this.buildIdGeneratorLambda();
-    this.buildReviewTable();
+    this.buildReviewsTable();
     this.buildSentimentNotificationLambda();
     this.buildWorkflow();
     this.buildEventTrigger();
+  }
+
+  buildEventBus() {
+    const reviewsEventBusId = pascalCase(`${this.id}-reviews-event-bus`);
+    this.reviewsEventBus = new EventBus(this, reviewsEventBusId, {
+      eventBusName: REVIEWS_EVENT_BUS_NAME,
+    });
   }
 
   buildSentimentLambda() {
@@ -143,10 +153,10 @@ export class StepFunctionsSentimentStack extends Stack {
     );
   }
 
-  buildReviewTable() {
-    const reviewTableId = pascalCase(`${this.id}-review-table`);
+  buildReviewsTable() {
+    const reviewsTableId = pascalCase(`${this.id}-review-table`);
     const saveReviewId = pascalCase(`${this.id}-save-review`);
-    this.reviewTable = new Table(this, reviewTableId, {
+    this.reviewsTable = new Table(this, reviewsTableId, {
       tableName: REVIEWS_TABLE_NAME,
       partitionKey: {
         name: 'reviewId',
@@ -157,7 +167,7 @@ export class StepFunctionsSentimentStack extends Stack {
     });
 
     const sentimentIndexId = pascalCase(`${this.id}-sentiment-index`);
-    this.reviewTable.addGlobalSecondaryIndex({
+    this.reviewsTable.addGlobalSecondaryIndex({
       indexName: sentimentIndexId,
       partitionKey: {
         name: 'sentiment',
@@ -166,7 +176,7 @@ export class StepFunctionsSentimentStack extends Stack {
     });
 
     this.saveReview = new DynamoPutItem(this, saveReviewId, {
-      table: this.reviewTable,
+      table: this.reviewsTable,
       item: {
         reviewId: DynamoAttributeValue.fromString(
           JsonPath.stringAt('$.reviewId.Payload')
@@ -256,7 +266,7 @@ export class StepFunctionsSentimentStack extends Stack {
       },
     });
 
-    this.reviewTable.grantWriteData(this.sentimentAnalysis);
+    this.reviewsTable.grantWriteData(this.sentimentAnalysis);
   }
 
   buildEventTrigger() {

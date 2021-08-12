@@ -5,5 +5,11 @@ import { StepFunctionsSentimentStack } from '../lib/step-functions-sentiment-sta
 import { ApiEventStack } from '../lib/api-event-stack';
 
 const app = new cdk.App();
-new ApiEventStack(app, 'SentimentAnalysis', {});
-new StepFunctionsSentimentStack(app, 'SentimentAnalysisWorkflow');
+const stepFunctionsSentimentStack = new StepFunctionsSentimentStack(
+  app,
+  'SentimentAnalysisWorkflow'
+);
+new ApiEventStack(app, 'SentimentAnalysis', {
+  table: stepFunctionsSentimentStack.reviewsTable,
+  eventBus: stepFunctionsSentimentStack.reviewsEventBus,
+});
