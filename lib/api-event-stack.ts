@@ -13,7 +13,6 @@ import { CfnOutput, Construct, Stack, StackProps } from '@aws-cdk/core';
 import { pascalCase } from 'change-case';
 import { join } from 'path';
 
-const { REVIEWS_EVENT_BUS_NAME = '', REVIEWS_TABLE_NAME = '' } = process.env;
 export interface ApiEventStackProps extends StackProps {
   table: Table;
   eventBus: EventBus;
